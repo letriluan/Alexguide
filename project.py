@@ -2,10 +2,11 @@
 from transformers import BertTokenizer, BertForQuestionAnswering
 import torch
 import torch.nn.functional as F
+import streamlit as st
 
 tokenizer = BertTokenizer.from_pretrained('bert-large-uncased-whole-word-masking-finetuned-squad')
 model = BertForQuestionAnswering.from_pretrained('bert-large-uncased-whole-word-masking-finetuned-squad')
-
+df = pd.read_csv('cleaned_data.csv')
 def answer_question_bert(question, context):
     """Function to answer questions using BERT directly from the context."""
     inputs = tokenizer(question, context, add_special_tokens=True, return_tensors="pt")
@@ -49,3 +50,23 @@ def answer_question_from_article(article_id, question, df):
 
     answer = answer_question_bert(question, article_text)
     return answer
+    
+def main():
+    st.title("Question Answering Systems")
+    question = st.text_input("Enter your question:")
+    article_id = st.number_input("Enter the article ID:", value=0, step=1)
+    
+    # Check if the article ID exists in the DataFrame
+    if article_id in df['id'].values:
+
+        article_text = df.loc[df['id'] == article_id, 'article'].values[0]
+        most_relevant_sentence, _ = find_most_relevant_sentence(question, article_text)
+
+        if st.button("Get Answer"):
+            st.write("Most relevant sentence:", most_relevant_sentence)
+            answer = answer_question_from_article(article_id, question, df)
+            st.write("Answer:", answer)
+    else:
+        st.write("Article ID not found.")
+if __name__ == "__main__":
+    main()
