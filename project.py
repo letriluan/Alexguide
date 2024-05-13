@@ -3,9 +3,10 @@ from transformers import BertTokenizer, BertForQuestionAnswering
 import torch
 import torch.nn.functional as F
 import streamlit as st
+import pandas as pd
 
-tokenizer = BertTokenizer.from_pretrained('bert-large-uncased-whole-word-masking-finetuned-squad')
-model = BertForQuestionAnswering.from_pretrained('bert-large-uncased-whole-word-masking-finetuned-squad')
+tokenizer = BertTokenizer.from_pretrained('bert-large-uncased-whole-word-masking-finetuned-squad',force_download=True)
+model = BertForQuestionAnswering.from_pretrained('bert-large-uncased-whole-word-masking-finetuned-squad',force_download=True)
 df = pd.read_csv('cleaned_data.csv')
 def answer_question_bert(question, context):
     """Function to answer questions using BERT directly from the context."""
