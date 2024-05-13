@@ -1,103 +1,51 @@
-import pandas as pd
-import spacy
-import nltk
-nltk.download('punkt')
-import numpy as np
-import streamlit as st
-from sentence_transformers import SentenceTransformer, util
-from spacy.tokens import Doc
+# I reference code from https://stackoverflow.com/questions/74049942/applying-pre-trained-bert-model-to-make-predictions 
+from transformers import BertTokenizer, BertForQuestionAnswering
+import torch
+import torch.nn.functional as F
 
-nlp = spacy.load("en_core_web_sm")
-model = SentenceTransformer('all-MiniLM-L6-v2')
-df = pd.read_csv('cleaned_data.csv', encoding="latin1")
+tokenizer = BertTokenizer.from_pretrained('bert-large-uncased-whole-word-masking-finetuned-squad')
+model = BertForQuestionAnswering.from_pretrained('bert-large-uncased-whole-word-masking-finetuned-squad')
 
-def resolve_coreferences(text):
-    doc = nlp(text)
-    if doc._.has_coref:
-        return doc._.coref_resolved
-    return text
-try:
-    Doc.set_extension("has_coref", default=False, force=True)
-    Doc.set_extension("coref_resolved", default=None, force=True)
-except ValueError:
-    pass
+def answer_question_bert(question, context):
+    """Function to answer questions using BERT directly from the context."""
+    inputs = tokenizer(question, context, add_special_tokens=True, return_tensors="pt")
+    input_ids = inputs["input_ids"].tolist()[0]
 
-def find_most_relevant_sentence(question, article_text):
-    text = resolve_coreferences(article_text)
-    doc = nlp(text)
-    sentences = [sent.text for sent in doc.sents]
-    question_embedding = model.encode(question)
-    sentence_embeddings = model.encode(sentences)
+    outputs = model(**inputs, return_dict=True)
+    answer_start_scores = outputs.start_logits
+    answer_end_scores = outputs.end_logits
 
-    similarities = util.pytorch_cos_sim(question_embedding, sentence_embeddings).squeeze()
-    most_similar_index = similarities.argmax().item()
-    confidence = similarities[most_similar_index].item()
+    answer_start = torch.argmax(answer_start_scores)
+    answer_end = torch.argmax(answer_end_scores) + 1
 
-    return sentences[most_similar_index], confidence
+    # Convert the tokens back to the original words
+    answer = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(input_ids[answer_start:answer_end]))
 
-def extract_relevant_snippets(question, relevant_sentence):
-    doc = nlp(relevant_sentence)
-    question_doc = nlp(question)
+    return answer
 
-    target_label = 'PERSON'  # Default to PERSON
+def answer_question_bert(question, context):
+    """Function to answer questions using BERT directly from the context, including confidence score."""
+    inputs = tokenizer(question, context, add_special_tokens=True, return_tensors="pt")
+    input_ids = inputs["input_ids"].tolist()[0]
 
-    if any(word in question.lower() for word in ['who', 'name']):
-        target_label = 'PERSON'
-    elif any(word in question.lower() for word in ['when', 'date', 'year', 'time']):
-        target_label = 'DATE'
-    elif any(word in question.lower() for word in ['where', 'city', 'country', 'place', 'location']):
-        target_label = 'GPE'
-    elif any(word in question.lower() for word in ['what', 'company', 'organization']):
-        target_label = 'ORG'
-    elif 'how many' in question.lower():
-        target_label = 'CARDINAL'
+    with torch.no_grad(): 
+        outputs = model(**inputs)
+        answer_start_scores = outputs.start_logits
+        answer_end_scores = outputs.end_logits
 
-    entities = {}
-    for ent in doc.ents:
-        if ent.label_ == target_label:
-            if ent.text in entities:
-                entities[ent.text] += 1
-            else:
-                entities[ent.text] = 1
-
-    if entities:
-        sorted_entities = sorted(entities.items(), key=lambda item: (-item[1], relevant_sentence.index(item[0])))
-        return sorted_entities[0][0]
-
-    return "No relevant information found."
+    start_probs = F.softmax(answer_start_scores, dim=-1)
+    end_probs = F.softmax(answer_end_scores, dim=-1)
+    answer_start = torch.argmax(start_probs)
+    answer_end = torch.argmax(end_probs) + 1
+    answer = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(input_ids[answer_start:answer_end]))
+    return answer
 
 def answer_question_from_article(article_id, question, df):
+    """Retrieve an article by ID and use BERT to answer a question based on the article's text, including confidence."""
     try:
         article_text = df.loc[df['id'] == article_id, 'article'].values[0]
     except IndexError:
         return "Article not found."
 
-    relevant_sentence, confidence = find_most_relevant_sentence(question, article_text)
-
-    confidence_threshold = 0.5
-    if confidence < confidence_threshold:
-        return "High confidence answer not found."
-
-    answer_snippet = extract_relevant_snippets(question, relevant_sentence)
-    return answer_snippet, confidence
-
-
-def main():
-    st.title("Question Answering Systems")
-    question = st.text_input("Enter your question:")
-    article_id = st.number_input("Enter the article ID:", value=0, step=1)
-    
-    # Check if the article ID exists in the DataFrame
-    if article_id in df['id'].values:
-
-        article_text = df.loc[df['id'] == article_id, 'article'].values[0]
-        most_relevant_sentence, _ = find_most_relevant_sentence(question, article_text)
-
-        if st.button("Get Answer"):
-            st.write("Most relevant sentence:", most_relevant_sentence)
-            answer = answer_question_from_article(article_id, question, df)
-            st.write("Answer:", answer)
-    else:
-        st.write("Article ID not found.")
-if __name__ == "__main__":
-    main()
+    answer = answer_question_bert(question, article_text)
+    return answer
